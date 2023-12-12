@@ -1,0 +1,229 @@
+<?php
+
+namespace App\Jobs;
+
+use Config;
+use File;
+use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Foundation\Bus\Dispatchable;
+use Illuminate\Http\Request;
+use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Storage;
+use App\Library\Services\CheckUploadedFileOnAwsORLocalService;
+use App\models\SystemConfig;
+
+class DynamicImageJob
+{
+    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+
+    /**
+     * Create a new job instance.
+     *
+     * @return void
+     */
+    //data come from listener
+    public $dynamic_image_data;
+    public function __construct($dynamic_image_data)
+    {
+        $this->dynamic_image_data = $dynamic_image_data;
+    }
+
+    /**
+     * Execute the job.
+     *
+     * @return void
+     */
+    public function handle(Request $request,CheckUploadedFileOnAwsORLocalService $checkUploadedFileOnAwsOrLocal)
+    {
+        $get_file_aws_local_flag = $checkUploadedFileOnAwsOrLocal->checkUploadedFileOnAwsORLocal();
+        $auth_site_id=\Auth::guard('admin')->user()->site_id;
+        $systemConfig = SystemConfig::where('site_id',$auth_site_id)->first();
+
+        $domain = \Request::getHost();
+        $subdomain = explode('.', $domain);
+
+        $dynamic_image_data = $this->dynamic_image_data;
+
+        $folder_name = $dynamic_image_data['folder_name'];
+
+        
+        //valid extensions
+        $extensions = array('jpg','png','jpeg','gif','JPG','PNG','JPEG');
+        //define path of folder
+        if($folder_name=="DC_Photo"&&$subdomain[0]=="uasb"){
+            $targetDir =  public_path().'/'.$subdomain[0].'/'.Config::get('constant.backend').'/'.$folder_name.'/';
+                $target_local_dir= public_path().'/'.Config::get('constant.backend').'/'.$folder_name.'/';
+        
+        }else{
+        
+            if($get_file_aws_local_flag->file_aws_local == '1'){
+                $targetDir = '/'.$subdomain[0].'/'.Config::get('constant.template').'/'.$folder_name.'/';
+                $target_local_dir='/'.Config::get('constant.template').'/'.$folder_name.'/';
+            }
+            else{
+                $targetDir =  public_path().'/'.$subdomain[0].'/'.Config::get('constant.template').'/'.$folder_name.'/';
+                $target_local_dir= public_path().'/'.Config::get('constant.template').'/'.$folder_name.'/';
+            }
+        
+        }
+       /* $count = 0; 
+    
+        //loop of multiple images
+        foreach($dynamic_image_data['image_upload'] as $image_key=>$image_value){
+            //get uploaded image name
+            $image_name = $image_value->getClientOriginalName();
+            //upload folde path
+            $targetFilePath = $targetDir.$image_name;
+        
+            //check file already exist in folder if yes then increment count
+            
+            // check image exists or not
+            if($get_file_aws_local_flag->file_aws_local == '1'){
+                if(Storage::disk('s3')->exists($targetFilePath)){
+                    $count =$count+1;
+                }
+            }else{
+                if(file_exists($targetFilePath)){
+                    $count =$count+1;
+                }
+            }
+        }
+
+        //if count is 0 that means image not already exist in folder
+        if($count == 0){*/
+            //if folder name is not exist then make folder
+            if (!($target_local_dir)) {
+                mkdir($target_local_dir, 0777, true);
+            }
+            $alreadyExistImages=array();
+            //check image array is not empty
+            if(!empty($dynamic_image_data['image_upload'])){
+                $imageCount = 0;
+                foreach($dynamic_image_data['image_upload'] as $image_key=>$image_value){
+                    
+
+                     //get uploaded image name
+                    $image_name = $image_value->getClientOriginalName();
+                    //upload folde path
+                    $targetFilePath = $targetDir.$image_name;
+                
+                    //check file already exist in folder if yes then increment count
+                    
+                    // check image exists or not
+                    $fileExists=false;
+                    if($get_file_aws_local_flag->file_aws_local == '1'){
+                        if(Storage::disk('s3')->exists($targetFilePath)){
+                            $fileExists=true;
+                        }
+                    }else{
+                        if(file_exists($targetFilePath)){
+                            $fileExists=true;
+                        }
+                    }
+
+                    if(!$fileExists){
+
+                    $upload_image=$dynamic_image_data['image_upload'][$image_key];
+                    //get uploaded image name
+                    $image_name = $image_value->getClientOriginalName();
+                    //upload folde path
+                    $targetFilePath = $targetDir.$image_name;
+                    //get extension of image
+                    $ext=pathinfo($targetFilePath,PATHINFO_EXTENSION);
+                    
+                    //check extension is in our predefined extension array or not               
+                    if(in_array($ext, $extensions)){
+                        if($folder_name=="DC_Photo"&&$subdomain[0]=="uasb"){
+                            $filePath = public_path().'/'.$subdomain[0].'/'.Config::get('constant.backend').'/'.$folder_name.'/'.$image_name;
+                                \File::copy($upload_image,$filePath);
+                        }else{
+                        
+                            if($get_file_aws_local_flag->file_aws_local == '1'){
+                                $filePath ='/'.$subdomain[0].'/'.Config::get('constant.template').'/'.$folder_name.'/'.$image_name;
+                                Storage::disk('s3')->put($filePath, file_get_contents($upload_image));
+                            }
+                            else{
+                                $filePath = public_path().'/'.$subdomain[0].'/'.Config::get('constant.template').'/'.$folder_name.'/'.$image_name;
+                                \File::copy($upload_image,$filePath);
+                            }
+                        
+                        }
+                    }
+
+                    }else{//if already exist
+                        array_push($alreadyExistImages, $image_name);
+                    }
+                    $imageCount++;
+                }
+            }
+            if($folder_name=="DC_Photo"&&$subdomain[0]=="uasb"){
+                $targetDir =public_path().'/'.$subdomain[0].'/'.Config::get('constant.backend').'/'.$folder_name;
+             }else{
+            if($get_file_aws_local_flag->file_aws_local == '1'){
+                
+                    $targetDir =$subdomain[0].'/'.Config::get('constant.template').'/'.$folder_name;
+                
+            }
+            else{
+                
+                $targetDir =public_path().'/'.$subdomain[0].'/'.Config::get('constant.template').'/'.$folder_name;
+                
+            }
+
+            }
+            if($get_file_aws_local_flag->file_aws_local == '1'){
+                //get image count after uploading image
+                $all_files = Storage::disk('s3')->allFiles($targetDir);
+                $files = [];
+                $ext_array = ['jpg','png','JPG','PNG','JPEG','jpeg'];
+                foreach ($all_files as $all_fileskey => $all_filesvalue) {
+                    $explode_file = explode('.',$all_filesvalue);
+                    if(in_array($explode_file[1], $ext_array)){
+                        $files[] = $all_filesvalue;
+                    }
+                }
+                $imageCounts = count($files);
+                
+            }
+            else{
+                
+                $files = glob($targetDir."/*.{jpg,png,JPG,PNG,JPEG,'jpeg'}", GLOB_BRACE);
+                $imageCounts = count($files);
+            }
+            
+            if(!empty($alreadyExistImages)){
+                $namef=$folder_name.date('YmdHis');
+                $ext = ".txt";
+                $txt='Already Existed Images :'."\n\n";
+                $txt .=implode("\n", $alreadyExistImages);
+                //$txt=implode("\n", $alreadyExistImages);
+
+               $filename =  $targetDir.'/'.$namef.$ext;
+
+                  $file = fopen($filename,"w+");
+
+                  fwrite($file,$txt);
+
+                  fclose($file);
+
+                 // chmod($file,0777);
+                   $protocol = isset($_SERVER["HTTPS"]) ? 'https' : 'http';
+        $path = $protocol.'://'.$subdomain[0].'.'.$subdomain[1].'.com/';
+        $alreadyExistImagesFile=$path.$subdomain[0]."/backend/templates/".$folder_name.'/'.$namef.$ext;
+
+
+            }else{
+                $alreadyExistImagesFile="";
+            }
+            
+
+            $message = Array('success' => 'true', 'message' => 'image upload','folder_name'=>$folder_name,'imageCounts'=>$imageCounts,'alreadyExistImages'=>$alreadyExistImagesFile);
+        /*}
+        else{
+            $message = Array('success' => 'false', 'message' => 'image already exists');
+        }*/
+        return $message;
+    }
+}
